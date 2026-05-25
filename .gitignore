@@ -1,0 +1,11 @@
+build/
+backup/
+
+# executables (just in case they appear elsewhere)
+*.exe
+*.obj
+*.o
+
+# IDE
+.vs/
+.vscode/
