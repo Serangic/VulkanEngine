@@ -26,7 +26,7 @@ import vulkan_hpp;
 #include <glm/glm.hpp>
 
 constexpr uint32_t WIDTH  = 1000;
-constexpr uint32_t HEIGHT = 800;
+constexpr uint32_t HEIGHT = 1000;
 
 const std::vector<char const *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
