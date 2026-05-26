@@ -15,6 +15,9 @@
 import vulkan_hpp;
 #endif
 
+// HELPER FILES:
+#include "utils/helper.hpp"
+
 #define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN        // REQUIRED only for GLFW CreateWindowSurface.
 #include <GLFW/glfw3.h>
@@ -25,8 +28,7 @@ import vulkan_hpp;
 constexpr uint32_t WIDTH  = 1000;
 constexpr uint32_t HEIGHT = 800;
 
-const std::vector<char const *> validationLayers = {
-    "VK_LAYER_KHRONOS_validation"};
+const std::vector<char const *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
@@ -214,7 +216,7 @@ class Application
 		}
 
 		// Get the required extensions.
-		auto requiredExtensions = getRequiredInstanceExtensions();
+		auto requiredExtensions = Helper::getRequiredInstanceExtensions(enableValidationLayers);
 
 		// Check if the required extensions are supported by the Vulkan implementation.
 		auto extensionProperties = context.enumerateInstanceExtensionProperties();
@@ -250,7 +252,7 @@ class Application
 		vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{};
 		debugUtilsMessengerCreateInfoEXT.messageSeverity = severityFlags;
 		debugUtilsMessengerCreateInfoEXT.messageType     = messageTypeFlags;
-		debugUtilsMessengerCreateInfoEXT.pfnUserCallback = &debugCallback;
+		debugUtilsMessengerCreateInfoEXT.pfnUserCallback = &Helper::debugCallback;
 		debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
 	}
 
@@ -353,14 +355,14 @@ class Application
 	void createSwapChain()
 	{
 		vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
-		swapChainExtent                                = chooseSwapExtent(surfaceCapabilities);
-		uint32_t minImageCount                         = chooseSwapMinImageCount(surfaceCapabilities);
+		swapChainExtent                                = Helper::chooseSwapExtent(surfaceCapabilities,window);
+		uint32_t minImageCount                         = Helper::chooseSwapMinImageCount(surfaceCapabilities);
 
 		std::vector<vk::SurfaceFormatKHR> availableFormats = physicalDevice.getSurfaceFormatsKHR(*surface);
-		swapChainSurfaceFormat                             = chooseSwapSurfaceFormat(availableFormats);
+		swapChainSurfaceFormat                             = Helper::chooseSwapSurfaceFormat(availableFormats);
 
 		std::vector<vk::PresentModeKHR> availablePresentModes = physicalDevice.getSurfacePresentModesKHR(*surface);
-		vk::PresentModeKHR              presentMode           = chooseSwapPresentMode(availablePresentModes);
+		vk::PresentModeKHR              presentMode           = Helper::chooseSwapPresentMode(availablePresentModes);
 
 		vk::SwapchainCreateInfoKHR swapChainCreateInfo{};
 		swapChainCreateInfo.surface          = *surface;
@@ -444,7 +446,7 @@ class Application
 
 	void createGraphicsPipeline()
 	{
-		vk::raii::ShaderModule shaderModule = createShaderModule(readFile("shaders/slang.spv"));
+		vk::raii::ShaderModule shaderModule = createShaderModule(Helper::readFile("shaders/slang.spv"));
 
 		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{};
 		vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex; 
@@ -861,109 +863,6 @@ class Application
 
 		vk::raii::ShaderModule shaderModule{ device, createInfo };
 		return shaderModule;
-	}
-
-	static std::vector<char> readFile(const std::string& filename)
-	{
-    std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-    if (!file.is_open()) {
-        throw std::runtime_error("OPENING_FILE_ERR");
-    }
-
-	std::vector<char> buffer(file.tellg());
-
-	file.seekg(0, std::ios::beg);
-	file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-
-	file.close();
-
-	return buffer;
-	}	
-
-	static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const &surfaceCapabilities)
-	{
-		auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
-		if ((0 < surfaceCapabilities.maxImageCount) && (surfaceCapabilities.maxImageCount < minImageCount))
-		{
-			minImageCount = surfaceCapabilities.maxImageCount;
-		}
-		return minImageCount;
-	}
-
-	static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const &availableFormats)
-	{
-		assert(!availableFormats.empty());
-		const auto formatIt = std::ranges::find_if(
-		    availableFormats,
-		    [](const auto &format) { return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear; });
-		return formatIt != availableFormats.end() ? *formatIt : availableFormats[0];
-	}
-
-	static vk::PresentModeKHR chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const &availablePresentModes)
-	{
-		assert(std::ranges::any_of(availablePresentModes, [](auto presentMode) { return presentMode == vk::PresentModeKHR::eFifo; }));
-		return std::ranges::any_of(availablePresentModes,
-		                           [](const vk::PresentModeKHR value) { return vk::PresentModeKHR::eMailbox == value; }) ?
-		           vk::PresentModeKHR::eMailbox :
-		           vk::PresentModeKHR::eFifo;
-	}
-
-	vk::Extent2D chooseSwapExtent(vk::SurfaceCapabilitiesKHR const &capabilities)
-	{
-		if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
-		{
-			return capabilities.currentExtent;
-		}
-		int width, height;
-		glfwGetFramebufferSize(window, &width, &height);
-
-		return {
-		    std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
-		    std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)};
-	}
-
-	std::vector<const char *> getRequiredInstanceExtensions()
-	{
-		uint32_t glfwExtensionCount = 0;
-		auto     glfwExtensions     = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-		std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-		if (enableValidationLayers)
-		{
-			extensions.push_back(vk::EXTDebugUtilsExtensionName);
-		}
-
-		return extensions;
-	}
-
-	static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, void *)
-	{
-		const char* severityStr = "INFO";
-    if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
-        severityStr = "ERROR";
-    else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning)
-        severityStr = "WARNING";
-    else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo)
-        severityStr = "INFO";
-    else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose)
-        severityStr = "VERBOSE";
-
-    const char* typeStr = "UNKNOWN";
-    if (type & vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation)
-        typeStr = "VALIDATION";
-    else if (type & vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
-        typeStr = "PERFORMANCE";
-    else if (type & vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral)
-        typeStr = "GENERAL";
-
-    std::cerr
-        << "ValidationLayer: "
-        << "[" << severityStr << " / " << typeStr << "]: "
-        << pCallbackData->pMessage
-        << "\n";
-
-    return vk::False;
 	}
 };
 

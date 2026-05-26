@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
 
-add_executable(app src/main.cpp)
+add_executable(app src/main.cpp src/utils/device.cpp src/utils/helper.cpp)
 
 target_link_libraries(app PRIVATE Vulkan::Vulkan)
 target_link_libraries(app PRIVATE glfw)
