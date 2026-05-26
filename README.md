@@ -1,8 +1,9 @@
 # Introduction
 
-This repository contains all the source files, needed to compile my "engine". It's not really an engine right now, but a mere project.
-I started reading about Vulkan and its associated libraries whilst in France, starting around 25th April 2026, and started coding on 5th May 2026.
-The code is free and open-source, as in freedom.
+<p>This repository contains all the source files, needed to compile my "engine". It's not really an engine right now, but a mere project.</p>
+
+<p>I started reading about Vulkan and its associated libraries whilst in France, starting around 25th April 2026, and started coding on 5th May 2026.
+The code is free and open-source, as in freedom.</p>
 
 # Repository Structure
 ### /src
