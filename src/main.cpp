@@ -17,6 +17,7 @@ import vulkan_hpp;
 
 // HELPER FILES:
 #include "utils/helper.hpp"
+#include "utils/device.hpp"
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN        // REQUIRED only for GLFW CreateWindowSurface.
@@ -446,7 +447,7 @@ class Application
 
 	void createGraphicsPipeline()
 	{
-		vk::raii::ShaderModule shaderModule = createShaderModule(Helper::readFile("shaders/slang.spv"));
+		vk::raii::ShaderModule shaderModule = Device::createShaderModule(Helper::readFile("shaders/slang.spv"),device);
 
 		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{};
 		vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex; 
@@ -751,11 +752,13 @@ class Application
 		vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();          	// Total size in bytes of the vertex data (size of one vertex × number of vertices)
 
 		auto [stagingBuffer, stagingBufferMemory] =                                  	// Create a temporary (staging) buffer and its associated memory
-			createBuffer(
+			Device::createBuffer(
 				bufferSize,                                                          	// Size of the buffer
 				vk::BufferUsageFlagBits::eTransferSrc,                               	// Buffer will be used as a source in a transfer operation
 				vk::MemoryPropertyFlagBits::eHostVisible |                           	// Memory is accessible from the CPU
-				vk::MemoryPropertyFlagBits::eHostCoherent                            	// CPU writes are automatically visible to the GPU (no manual flush needed)
+				vk::MemoryPropertyFlagBits::eHostCoherent,                            	// CPU writes are automatically visible to the GPU (no manual flush needed)
+				device,
+				physicalDevice
 			);
 
 		void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);            	// Map the staging buffer memory so CPU can write into it
@@ -763,106 +766,32 @@ class Application
 		stagingBufferMemory.unmapMemory();                                           	// Unmap memory after writing (flush not needed due to HOST_COHERENT)
 
 		std::tie(vertexBuffer, vertexBufferMemory) =                                 	// Create the final GPU vertex buffer and its memory
-			createBuffer(
+			Device::createBuffer(
 				bufferSize,                                                          	// Same size as staging buffer
 				vk::BufferUsageFlagBits::eVertexBuffer |                             	// Buffer will be used as a vertex buffer in rendering
 				vk::BufferUsageFlagBits::eTransferDst,                               	// Buffer will receive data from a transfer operation
-				vk::MemoryPropertyFlagBits::eDeviceLocal                             	// Memory is device-local (fast GPU memory, not CPU accessible)
+				vk::MemoryPropertyFlagBits::eDeviceLocal,                             	// Memory is device-local (fast GPU memory, not CPU accessible)
+				device,
+				physicalDevice
 			);
 
-		copyBuffer(stagingBuffer, vertexBuffer, bufferSize);                         	// Copy data from staging buffer → device-local vertex buffer
+		Device::copyBuffer(stagingBuffer, vertexBuffer, bufferSize,commandPool,device,queue);                         	// Copy data from staging buffer → device-local vertex buffer
 	}
 
 	void createIndexBuffer() {
 		vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
 		auto [stagingBuffer, stagingBufferMemory] =
-		    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+		    Device::createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,device,physicalDevice);
 
 		void *data = stagingBufferMemory.mapMemory(0, bufferSize);
 		memcpy(data, indices.data(), (size_t) bufferSize);
 		stagingBufferMemory.unmapMemory();
 
 		std::tie(indexBuffer, indexBufferMemory) =
-		    createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal);
+		    Device::createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal,device,physicalDevice);
 
-		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-	}
-
-//	Helper functions
-	void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & dstBuffer, vk::DeviceSize size)
-	{
-		vk::CommandBufferAllocateInfo allocInfo{};                                  	// Structure describing how command buffers should be allocated
-		allocInfo.commandPool = commandPool;                                         	// Command pool from which the command buffer will be allocated
-		allocInfo.level = vk::CommandBufferLevel::ePrimary;                          	// Primary command buffer (can be submitted directly to a queue)
-		allocInfo.commandBufferCount = 1;                                            	// Allocate exactly one command buffer
-
-		vk::raii::CommandBuffer commandCopyBuffer =                                  	// RAII wrapper for a single command buffer used for copy operations
-			std::move(device.allocateCommandBuffers(allocInfo).front());             	// Allocate and take ownership of the first (and only) command buffer
-
-		vk::CommandBufferBeginInfo beginInfo{};                                      	// Structure specifying how the command buffer recording will begin
-		beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;             	// Hint that this command buffer will be recorded and submitted only once
-
-		commandCopyBuffer.begin(beginInfo);                                          	// Begin recording commands into the command buffer
-
-		commandCopyBuffer.copyBuffer(                                                	// Record a buffer-to-buffer copy command
-			*srcBuffer,                                                              	// Source buffer (staging buffer, CPU-visible)
-			*dstBuffer,                                                              	// Destination buffer (device-local GPU buffer)
-			vk::BufferCopy(0, 0, size)                                               	// Copy region: from offset 0 → offset 0, for 'size' bytes
-		);
-
-		commandCopyBuffer.end();                                                     	// Finish recording commands
-
-		vk::SubmitInfo SubmitInfo{};                                                 	// Structure describing how to submit work to the queue
-		SubmitInfo.commandBufferCount = 1;                                           	// Submitting one command buffer
-		SubmitInfo.pCommandBuffers = &*commandCopyBuffer;                            	// Pointer to the raw VkCommandBuffer handle from RAII wrapper
-
-		queue.submit(SubmitInfo, nullptr);                                           	// Submit the copy command buffer to the queue (no fence used)
-
-		queue.waitIdle();                                                            	// Block CPU until the queue has finished executing all submitted work
-	}
-
-	std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties)
-	{
-		vk::BufferCreateInfo bufferInfo{};
-		bufferInfo.size = size;
-		bufferInfo.usage = usage;
-		bufferInfo.sharingMode = vk::SharingMode::eExclusive;
-
-		vk::raii::Buffer       buffer          = vk::raii::Buffer(device, bufferInfo);
-		vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-
-		vk::MemoryAllocateInfo allocInfo{};
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-		vk::raii::DeviceMemory bufferMemory = vk::raii::DeviceMemory(device, allocInfo);
-		buffer.bindMemory(*bufferMemory, 0);
-		return {std::move(buffer), std::move(bufferMemory)};
-	}
-
-	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
-	{
-		vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
-		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
-		{
-    	if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
-    		{
-       		return i;
-    		}
-		}
-
-		throw std::runtime_error("failed to find suitable memory type!");
-	}
-
-	[[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const
-	{
-		vk::ShaderModuleCreateInfo createInfo{}; 
-		createInfo.codeSize = code.size() * sizeof(char); 
-		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-		vk::raii::ShaderModule shaderModule{ device, createInfo };
-		return shaderModule;
+		Device::copyBuffer(stagingBuffer, indexBuffer, bufferSize,commandPool,device,queue);
 	}
 };
 
