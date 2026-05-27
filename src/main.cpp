@@ -24,7 +24,11 @@ import vulkan_hpp;
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
+
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
 
 constexpr uint32_t WIDTH  = 1000;
 constexpr uint32_t HEIGHT = 1000;
@@ -80,6 +84,13 @@ const std::vector<uint16_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
+struct UniformBufferObject
+{
+	glm::mat4 model;
+	glm::mat4 view;
+	glm::mat4 proj;
+};
+
 class Application
 {
   public:
@@ -111,6 +122,7 @@ class Application
 	std::vector<vk::raii::ImageView> 	swapChainImageViews;
 
 	vk::raii::RenderPass 				renderpass{nullptr};
+	vk::raii::DescriptorSetLayout 		descriptorSetLayout = nullptr;
 	vk::raii::PipelineLayout 			pipelineLayout{nullptr};
 	vk::raii::Pipeline 					graphicsPipeline{nullptr};
 	std::vector<vk::raii::Framebuffer> swapChainFramebuffers;
@@ -126,6 +138,13 @@ class Application
 	vk::raii::DeviceMemory vertexBufferMemory 	= nullptr;
 	vk::raii::Buffer       indexBuffer        = nullptr;
 	vk::raii::DeviceMemory indexBufferMemory  = nullptr;
+
+	std::vector<vk::raii::Buffer>       uniformBuffers;
+	std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+	std::vector<void *>                 uniformBuffersMapped;
+
+	vk::raii::DescriptorPool descriptorPool = nullptr;
+	std::vector<vk::raii::DescriptorSet> descriptorSets;
 
 	const int MAX_FRAMES_IN_FLIGHT = 2;
 	uint32_t currentFrame = 0;
@@ -163,11 +182,15 @@ class Application
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
+		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
 		createVertexBuffer();
 		createIndexBuffer();
+		createUniformBuffers();
+		createDescriptorPool();
+		createDescriptorSets();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -495,7 +518,7 @@ class Application
         rasterizer.rasterizerDiscardEnable = vk::False;
     	rasterizer.polygonMode             = vk::PolygonMode::eFill;
         rasterizer.cullMode                = vk::CullModeFlagBits::eBack;
-        rasterizer.frontFace               = vk::FrontFace::eClockwise;
+        rasterizer.frontFace               = vk::FrontFace::eCounterClockwise;
         rasterizer.depthBiasEnable         = vk::False;
         rasterizer.lineWidth               = 1.0f;
 
@@ -516,7 +539,8 @@ class Application
 		// PIPELINE LAYOUT IS CREATED HERE. I know I could've made another function for it, but it doesn't change much to the actual story.
 
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
-		pipelineLayoutInfo.setLayoutCount = 0;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &*descriptorSetLayout;
 		pipelineLayoutInfo.pushConstantRangeCount = 0;
 
 		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
@@ -630,6 +654,7 @@ class Application
 		commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
 		commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
 
+		commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
 		commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		// End render pass
@@ -660,12 +685,15 @@ class Application
 		assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
 		throw std::runtime_error("Failed to acquire swap chain image!");
 		}
+		
+		updateUniformBuffer(currentFrame);
 
 		device.resetFences(*inFlightFences[currentFrame]); 														// Reset the fence so it can be used again for the next frame
 		recordCommandBuffer(commandBuffers[currentFrame], imageIndex); 											// Record GPU commands into the command buffer for the acquired image
 
 		queue.waitIdle();        																				// NOTE: for simplicity, wait for the queue to be idle before starting the frame
 		                         																				// In the next chapter you see how to use multiple frames in flight and fences to sync
+		
 
 		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput); 	// Specify the pipeline stage where the semaphore wait will occur (color attachment output stage)
 		vk::SubmitInfo   submitInfo{}; 																			// Structure describing how command buffers are submitted to the queue
@@ -793,7 +821,95 @@ class Application
 
 		Device::copyBuffer(stagingBuffer, indexBuffer, bufferSize,commandPool,device,queue);
 	}
+
+	void createDescriptorSetLayout()
+	{
+		vk::DescriptorSetLayoutBinding uboLayoutBinding{};
+		    uboLayoutBinding.binding = 0;
+			uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+			uboLayoutBinding.descriptorCount = 1;
+			uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+
+			vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+			layoutInfo.bindingCount = 1; 
+			layoutInfo.pBindings = &uboLayoutBinding;
+			descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+	}
+
+	void createUniformBuffers()
+	{
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    		{
+        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+        auto [buffer, bufferMem]  = Device::createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,device,physicalDevice);
+        uniformBuffers.emplace_back(std::move(buffer));
+        uniformBuffersMemory.emplace_back(std::move(bufferMem));
+        uniformBuffersMapped.emplace_back( uniformBuffersMemory.back().mapMemory(0, bufferSize));
+    		}
+	}
+
+	void updateUniformBuffer(uint32_t currentImage)
+	{
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+    	auto currentTime = std::chrono::high_resolution_clock::now();
+    	float time       = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+		UniformBufferObject ubo{};
+		ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
+		ubo.proj[1][1] *= -1;
+
+		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+	}
+
+	void createDescriptorPool()
+	{
+		vk::DescriptorPoolSize poolSize{};
+		poolSize.type = vk::DescriptorType::eUniformBuffer;
+		poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+
+		vk::DescriptorPoolCreateInfo poolInfo{};
+		poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+		poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+		poolInfo.poolSizeCount = 1;
+		poolInfo.pPoolSizes = &poolSize;
+
+		descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+	}
+
+	void createDescriptorSets()
+	{
+		std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
+		vk::DescriptorSetAllocateInfo        allocInfo{};
+		allocInfo.descriptorPool     = descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+        allocInfo.pSetLayouts        = layouts.data();
+
+		descriptorSets = device.allocateDescriptorSets(allocInfo);
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			vk::DescriptorBufferInfo bufferInfo{};
+			bufferInfo.buffer = uniformBuffers[i];
+			bufferInfo.offset = 0;
+			bufferInfo.range = sizeof(UniformBufferObject);
+
+			vk::WriteDescriptorSet   descriptorWrite{};
+			descriptorWrite.dstSet          = descriptorSets[i];
+            descriptorWrite.dstBinding      = 0;
+            descriptorWrite.dstArrayElement = 0;
+        	descriptorWrite.descriptorCount = 1;
+            descriptorWrite.descriptorType  = vk::DescriptorType::eUniformBuffer;
+            descriptorWrite.pBufferInfo     = &bufferInfo;
+
+			device.updateDescriptorSets(descriptorWrite, {});
+		}
+	}
 };
+
+
 
 int main()
 {
