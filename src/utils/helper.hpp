@@ -12,4 +12,5 @@ class Helper {
         static vk::SurfaceFormatKHR                             chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const &availableFormats);
         static vk::PresentModeKHR                               chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const &availablePresentModes);
         static vk::Extent2D                                     chooseSwapExtent(vk::SurfaceCapabilitiesKHR const& capabilities,GLFWwindow *window);
+        static bool                                             isDeviceSuitable(vk::raii::PhysicalDevice const &physicalDevice,std::vector<const char *> requiredDeviceExtension);
 };  

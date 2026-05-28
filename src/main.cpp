@@ -289,32 +289,10 @@ class Application
 		surface = vk::raii::SurfaceKHR(instance, _surface);
 	}
 
-	bool isDeviceSuitable(vk::raii::PhysicalDevice const &physicalDevice)
-	{
-		// Check if the physicalDevice supports the Vulkan 1.2 API version
-		bool supportsVulkan1_2 = physicalDevice.getProperties().apiVersion >= VK_API_VERSION_1_2;
-
-		// Check if any of the queue families support graphics operations
-		auto queueFamilies    = physicalDevice.getQueueFamilyProperties();
-		bool supportsGraphics = std::ranges::any_of(queueFamilies, [](auto const &qfp) { return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
-
-		// Check if all required physicalDevice extensions are available
-		auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
-		bool supportsAllRequiredExtensions =
-		    std::ranges::all_of(requiredDeviceExtension,
-		                        [&availableDeviceExtensions](auto const &requiredDeviceExtension) {
-			                        return std::ranges::any_of(availableDeviceExtensions,
-			                                                   [requiredDeviceExtension](auto const &availableDeviceExtension) { return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0; });
-		                        });
-
-		// Return true if the physicalDevice meets all the criteria
-		return supportsVulkan1_2 && supportsGraphics && supportsAllRequiredExtensions;
-	}
-
 	void pickPhysicalDevice()
 	{
 		std::vector<vk::raii::PhysicalDevice> physicalDevices = instance.enumeratePhysicalDevices();
-		auto const                            devIter         = std::ranges::find_if(physicalDevices, [&](auto const &physicalDevice) { return isDeviceSuitable(physicalDevice); });
+		auto const                            devIter         = std::ranges::find_if(physicalDevices, [&](auto const &physicalDevice) { return Helper::isDeviceSuitable(physicalDevice,requiredDeviceExtension); });
 		if (devIter == physicalDevices.end())
 		{
 			throw std::runtime_error("failed to find a suitable GPU!");

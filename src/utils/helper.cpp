@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <ranges>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -109,4 +110,26 @@
                 std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
                 std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)};
         }
+
+    bool Helper::isDeviceSuitable(vk::raii::PhysicalDevice const &physicalDevice,std::vector<const char *> requiredDeviceExtension)
+	{
+		// Check if the physicalDevice supports the Vulkan 1.2 API version
+		bool supportsVulkan1_2 = physicalDevice.getProperties().apiVersion >= VK_API_VERSION_1_2;
+
+		// Check if any of the queue families support graphics operations
+		auto queueFamilies    = physicalDevice.getQueueFamilyProperties();
+		bool supportsGraphics = std::ranges::any_of(queueFamilies, [](auto const &qfp) { return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
+
+		// Check if all required physicalDevice extensions are available
+		auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
+		bool supportsAllRequiredExtensions =
+		    std::ranges::all_of(requiredDeviceExtension,
+		                        [&availableDeviceExtensions](auto const &requiredDeviceExtension) {
+			                        return std::ranges::any_of(availableDeviceExtensions,
+			                                                   [requiredDeviceExtension](auto const &availableDeviceExtension) { return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0; });
+		                        });
+
+		// Return true if the physicalDevice meets all the criteria
+		return supportsVulkan1_2 && supportsGraphics && supportsAllRequiredExtensions;
+	}
 
