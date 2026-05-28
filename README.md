@@ -12,6 +12,9 @@ Contains all the source files, which contain the code necessary for the applicat
 ### src/utils/
 Contains all the source files, which contain code meant to help the process of running the application, like finding elements of an array, or getting data.
 
+### src/core/
+Contains all files, which make up the core of Vulkan setup, as of 28/05/2026, it could contains global variables.
+
 ### shaders/
 Contains all the source files, which contain code meant to encompass the functions of the shaders.
 Shader data is not necessarily defined in these files, but can be.
